@@ -32,19 +32,26 @@ const getAccessToken = async ({ code, state }) => {
 }
 
 const inviteUserToOrganization = async (userId) => {
-  const response = await axios.post(
-    `https://api.github.com/orgs/${ORGANIZATION}/invitations`,
-    {
-      invitee_id: userId,
-    },
-    {
-      auth: {
-        username: USERNAME,
-        password: PRIVATE_KEY,
+  try {
+    const response = await axios.post(
+      `https://api.github.com/orgs/${ORGANIZATION}/invitations`,
+      {
+        invitee_id: userId,
       },
+      {
+        auth: {
+          username: USERNAME,
+          password: PRIVATE_KEY,
+        },
+      }
+    )
+    return 'success'
+  } catch (e) {
+    if (e.response.status === 422) {
+      return 'already-member'
     }
-  )
-  return !!response.data.id
+  }
+  return 'error'
 }
 
 app.get('/', (_, res) => res.send('OK'))
@@ -78,7 +85,7 @@ app.post('/invite', async (req, res) => {
   const { userId } = req.body
   const invited = await inviteUserToOrganization(userId)
   res.send({
-    success: invited,
+    message: invited,
   })
 })
 
