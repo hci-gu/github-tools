@@ -14,8 +14,63 @@ const {
   CLIENT_SECRET,
 } = process.env
 
+const API_URL = 'https://api.github.com'
+const auth = () => ({
+  auth: {
+    username: USERNAME,
+    password: PRIVATE_KEY,
+  },
+})
+
 app.use(cors())
 app.use(bodyParser.json())
+
+const getAllUsersInOrganization = async () => {
+  const response = await axios.get(
+    `${API_URL}/orgs/${ORGANIZATION}/members`,
+    auth()
+  )
+  return response.data
+}
+
+const getPullsForRepo = async (repo) => {
+  const response = await axios.get(
+    `${API_URL}/repos/${repo.full_name}/pulls`,
+    auth()
+  )
+  return response.data
+}
+
+const getAllReposInOrganization = async () => {
+  const response = await axios.get(
+    `${API_URL}/orgs/${ORGANIZATION}/repos`,
+    auth()
+  )
+
+  return Promise.all(
+    response.data.map(async (repo) => {
+      const pulls = await getPullsForRepo(repo)
+      repo.pulls = pulls
+      return repo
+    })
+  )
+}
+
+const requestReviewer = async (user, pullRequest) => {
+  const path = pullRequest.url.replace('https://api.github.com/', '')
+  try {
+    const response = await axios.post(
+      `${API_URL}/${path}/requested_reviewers`,
+      {
+        reviewers: [user.login],
+      },
+      auth()
+    )
+    return response.status === 201
+  } catch (e) {
+    return false
+  }
+}
 
 const getAccessToken = async ({ code, state }) => {
   const response = await axios.post(
@@ -33,17 +88,12 @@ const getAccessToken = async ({ code, state }) => {
 
 const inviteUserToOrganization = async (userId) => {
   try {
-    const response = await axios.post(
-      `https://api.github.com/orgs/${ORGANIZATION}/invitations`,
+    await axios.post(
+      `${API_URL}/orgs/${ORGANIZATION}/invitations`,
       {
         invitee_id: userId,
       },
-      {
-        auth: {
-          username: USERNAME,
-          password: PRIVATE_KEY,
-        },
-      }
+      auth()
     )
     return 'success'
   } catch (e) {
@@ -87,6 +137,21 @@ app.post('/invite', async (req, res) => {
   res.send({
     message: invited,
   })
+})
+
+app.get('/users', async (_, res) => {
+  const users = await getAllUsersInOrganization()
+  res.send(users)
+})
+app.get('/repos', async (_, res) => {
+  const repos = await getAllReposInOrganization()
+  res.send(repos)
+})
+app.post('/request-reviewer', async (req, res) => {
+  const { user, pullRequest } = req.body
+  const success = await requestReviewer(user, pullRequest)
+
+  res.send(success)
 })
 
 app.listen(4000)
