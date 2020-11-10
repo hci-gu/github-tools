@@ -41,6 +41,29 @@ const getPullsForRepo = async (repo) => {
   return response.data
 }
 
+const getEventsForPage = async (page = 0, totalResults = []) => {
+  try {
+    const response = await axios.get(
+      `${API_URL}/orgs/${ORGANIZATION}/events?per_page=100&page=${page}`,
+      auth()
+    )
+    const result = [...totalResults, ...response.data]
+    if (response.data.length === 100) {
+      return getEventsForPage(page + 1, result)
+    }
+    return result
+  } catch (e) {
+    console.log(e)
+  }
+}
+
+const getEvents = async () => getEventsForPage(0)
+
+const getCreateRepoEvents = async () => {
+  const events = await getEvents()
+  return events.filter((event) => event.type === 'CreateEvent')
+}
+
 const getAllReposInOrganization = async () => {
   const response = await axios.get(
     `${API_URL}/orgs/${ORGANIZATION}/repos`,
@@ -49,20 +72,18 @@ const getAllReposInOrganization = async () => {
 
   return Promise.all(
     response.data.map(async (repo) => {
-      const pulls = await getPullsForRepo(repo)
-      repo.pulls = pulls
+      repo.pulls = repo.open_issues_count > 0 ? await getPullsForRepo(repo) : []
       return repo
     })
   )
 }
 
-const requestReviewer = async (user, pullRequest) => {
-  const path = pullRequest.url.replace('https://api.github.com/', '')
+const requestReviewer = async (username, pullRequest) => {
   try {
     const response = await axios.post(
-      `${API_URL}/${path}/requested_reviewers`,
+      `${pullRequest.url}/requested_reviewers`,
       {
-        reviewers: [user.login],
+        reviewers: [username],
       },
       auth()
     )
@@ -148,10 +169,21 @@ app.get('/repos', async (_, res) => {
   res.send(repos)
 })
 app.post('/request-reviewer', async (req, res) => {
-  const { user, pullRequest } = req.body
-  const success = await requestReviewer(user, pullRequest)
+  const { username, pullRequest } = req.body
+  const success = await requestReviewer(username, pullRequest)
 
   res.send(success)
+})
+
+app.get('/events/repo-created', async (_, res) => {
+  const events = await getCreateRepoEvents()
+  res.send(events)
+})
+app.get('/events', async (_, res) => res.send(await getEvents()))
+
+app.get('/limit', async (_, res) => {
+  const response = await axios.get(`${API_URL}/rate_limit`, auth())
+  res.send(response.data)
 })
 
 app.listen(4000)
