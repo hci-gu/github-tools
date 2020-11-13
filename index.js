@@ -93,7 +93,7 @@ const getOwnerForRepo = async (repo) => {
 
 const getAllReposInOrganization = async () => {
   const response = await axios.get(
-    `${API_URL}/orgs/${ORGANIZATION}/repos`,
+    `${API_URL}/orgs/${ORGANIZATION}/repos?per_page=100`,
     auth()
   )
 
