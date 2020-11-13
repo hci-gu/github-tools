@@ -25,6 +25,8 @@ const auth = () => ({
 app.use(cors())
 app.use(bodyParser.json())
 
+let cache = {}
+
 const getAllUsersInOrganization = async () => {
   const response = await axios.get(
     `${API_URL}/orgs/${ORGANIZATION}/members`,
@@ -42,6 +44,7 @@ const getPullsForRepo = async (repo) => {
 }
 
 const getEventsForPage = async (page = 0, totalResults = []) => {
+  if (page === 4) return totalResults
   try {
     const response = await axios.get(
       `${API_URL}/orgs/${ORGANIZATION}/events?per_page=100&page=${page}`,
@@ -64,6 +67,30 @@ const getCreateRepoEvents = async () => {
   return events.filter((event) => event.type === 'CreateEvent')
 }
 
+const getCommitsForRepo = async (repo) => {
+  if (cache[repo.name]) return cache[repo.name]
+  const response = await axios.get(
+    `https://api.github.com/repos/${ORGANIZATION}/${repo.name}/commits`,
+    auth()
+  )
+  cache[repo.name] = response.data
+  return response.data
+}
+
+const getOwnerForRepo = async (repo) => {
+  try {
+    const commits = await getCommitsForRepo(repo)
+    if (commits.length > 0) {
+      if (commits[0].author) return commits[0].author
+      return {
+        ...commits[0].commit.author,
+        login: commits[0].commit.author.name,
+      }
+    }
+  } catch (e) {}
+  return null
+}
+
 const getAllReposInOrganization = async () => {
   const response = await axios.get(
     `${API_URL}/orgs/${ORGANIZATION}/repos`,
@@ -72,6 +99,7 @@ const getAllReposInOrganization = async () => {
 
   return Promise.all(
     response.data.map(async (repo) => {
+      repo.owner = await getOwnerForRepo(repo)
       repo.pulls = repo.open_issues_count > 0 ? await getPullsForRepo(repo) : []
       return repo
     })
