@@ -23,6 +23,8 @@
     "cors": "^2.8.5",
     "dotenv": "^8.2.0",
     "express": "^4.17.1",
+    "graphql": "^15.4.0",
+    "graphql-request": "^3.3.0",
     "uuid": "^8.3.1"
   }
 }

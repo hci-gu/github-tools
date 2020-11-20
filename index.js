@@ -2,10 +2,12 @@ require('dotenv').config()
 
 const app = require('express')()
 const axios = require('axios')
+const { GraphQLClient, gql } = require('graphql-request')
 const cors = require('cors')
 const uuid = require('uuid').v4
 const bodyParser = require('body-parser')
 const querystring = require('querystring')
+const { promiseSeries } = require('./utils')
 const {
   USERNAME,
   PRIVATE_KEY,
@@ -13,6 +15,12 @@ const {
   CLIENT_ID,
   CLIENT_SECRET,
 } = process.env
+
+const client = new GraphQLClient('https://api.github.com/graphql', {
+  headers: {
+    Authorization: `bearer ${PRIVATE_KEY}`,
+  },
+})
 
 const API_URL = 'https://api.github.com'
 const auth = () => ({
@@ -37,7 +45,7 @@ const getAllUsersInOrganization = async () => {
 
 const getPullsForRepo = async (repo) => {
   const response = await axios.get(
-    `${API_URL}/repos/${repo.full_name}/pulls`,
+    `${API_URL}/repos/${repo.full_name}/pulls?state=all`,
     auth()
   )
   return response.data
@@ -100,18 +108,22 @@ const getAllReposInOrganization = async () => {
   return Promise.all(
     response.data.map(async (repo) => {
       repo.owner = await getOwnerForRepo(repo)
-      repo.pulls = repo.open_issues_count > 0 ? await getPullsForRepo(repo) : []
+      repo.pulls = await getPullsForRepo(repo)
       return repo
     })
   )
 }
 
-const requestReviewer = async (username, pullRequest) => {
+const requestReviewer = async ({ reviewer, pr }) => {
+  const url = pr
+    .replace('https://github.com', `${API_URL}/repos`)
+    .replace('/pull', '/pulls')
+  console.log('request', url, reviewer)
   try {
     const response = await axios.post(
-      `${pullRequest.url}/requested_reviewers`,
+      `${url}/requested_reviewers`,
       {
-        reviewers: [username],
+        reviewers: [reviewer],
       },
       auth()
     )
@@ -192,13 +204,25 @@ app.get('/users', async (_, res) => {
   const users = await getAllUsersInOrganization()
   res.send(users)
 })
+
 app.get('/repos', async (_, res) => {
+  if (cache['repos']) return res.send(cache['repos'])
   const repos = await getAllReposInOrganization()
+  cache['repos'] = repos
   res.send(repos)
+})
+app.post('/request-reviewers', async (req, res) => {
+  const reviews = req.body
+  await promiseSeries(reviews, requestReviewer)
+  const success = true
+  res.send(success)
 })
 app.post('/request-reviewer', async (req, res) => {
   const { username, pullRequest } = req.body
-  const success = await requestReviewer(username, pullRequest)
+  const success = await requestReviewer({
+    reviewer: username,
+    pr: pullRequest.url,
+  })
 
   res.send(success)
 })
@@ -212,6 +236,92 @@ app.get('/events', async (_, res) => res.send(await getEvents()))
 app.get('/limit', async (_, res) => {
   const response = await axios.get(`${API_URL}/rate_limit`, auth())
   res.send(response.data)
+})
+
+app.get('/gql', async (req, res) => {
+  const query = gql`
+    {
+      organization(login: "gu-tig169") {
+        repositories(first: 100) {
+          nodes {
+            name
+            url
+            defaultBranchRef {
+              target {
+                ... on Commit {
+                  history(first: 5) {
+                    nodes {
+                      author {
+                        user {
+                          login
+                        }
+                        name
+                        email
+                        date
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            pullRequests(first: 10) {
+              nodes {
+                url
+                number
+                state
+                title
+                reviewRequests(first: 10) {
+                  nodes {
+                    requestedReviewer {
+                      ... on User {
+                        login
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `
+
+  const getUserFromCommits = (ref) => {
+    const blocklist = ['rrostt']
+    const commit = ref.target.history.nodes.find((commit) => {
+      return (
+        commit.author &&
+        commit.author.user &&
+        commit.author.user.login &&
+        blocklist.indexOf(commit.author.user.login) === -1
+      )
+    })
+    if (commit) {
+      return commit.author.user.login
+    }
+    return ref
+  }
+
+  const data = await client.request(query, {})
+  const mapped = data.organization.repositories.nodes.map((repo) => {
+    let user
+    if (repo.defaultBranchRef) {
+      user = getUserFromCommits(repo.defaultBranchRef)
+      delete repo.defaultBranchRef
+    }
+    return {
+      ...repo,
+      user,
+      pullRequests: repo.pullRequests.nodes.map((pr) => ({
+        ...pr,
+        reviewRequests: pr.reviewRequests.nodes.map((prReviewRequest) => ({
+          ...prReviewRequest.requestedReviewer,
+        })),
+      })),
+    }
+  })
+  res.send(mapped)
 })
 
 app.listen(4000)
