@@ -2,6 +2,7 @@ require('dotenv').config()
 
 const app = require('express')()
 const axios = require('axios')
+const crypto = require('crypto')
 const { GraphQLClient, gql } = require('graphql-request')
 const cors = require('cors')
 const uuid = require('uuid').v4
@@ -319,9 +320,44 @@ app.get('/gql', async (req, res) => {
   res.send(mapped)
 })
 
+const dataForQuery = async (query, endCursor = null) => {
+  const hash = crypto
+    .createHash('sha1')
+    .update(`${query}_${endCursor}`)
+    .digest('base64')
+
+  if (cache[hash]) {
+    console.log('cache hit')
+    return cache[hash]
+  }
+  const response = await client.request(query, {
+    endCursor,
+  })
+  console.log('not cached fetch and set to cache')
+  cache[hash] = response
+
+  return response
+}
+
+const getAllDataForQuery = async (query, endCursor, data = []) => {
+  console.log('getAllDataForQuery', data.length, endCursor)
+  const response = await dataForQuery(query, endCursor)
+  console.log('response', response)
+
+  const commits = response.repository.ref.target.history.edges.map(
+    (n) => n.node
+  )
+  const pageInfo = response.repository.ref.target.history.pageInfo
+  if (pageInfo.hasNextPage) {
+    return getAllDataForQuery(query, pageInfo.endCursor, [...data, ...commits])
+  }
+  return [...data, ...commits]
+}
+
 app.post('/gql-query', async (req, res) => {
   const query = gql([req.body.query])
-  const data = await client.request(query, {})
+  const data = await getAllDataForQuery(query)
+
   res.send(data)
 })
 
