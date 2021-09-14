@@ -8,13 +8,8 @@ const uuid = require('uuid').v4
 const bodyParser = require('body-parser')
 const querystring = require('querystring')
 const { promiseSeries } = require('./utils')
-const {
-  USERNAME,
-  PRIVATE_KEY,
-  ORGANIZATION,
-  CLIENT_ID,
-  CLIENT_SECRET,
-} = process.env
+const { USERNAME, PRIVATE_KEY, ORGANIZATION, CLIENT_ID, CLIENT_SECRET } =
+  process.env
 
 const client = new GraphQLClient('https://api.github.com/graphql', {
   headers: {
@@ -241,7 +236,7 @@ app.get('/limit', async (_, res) => {
 app.get('/gql', async (req, res) => {
   const query = gql`
     {
-      organization(login: "gu-tig169") {
+      organization(login: "${ORGANIZATION}") {
         repositories(first: 100) {
           nodes {
             name
@@ -322,6 +317,12 @@ app.get('/gql', async (req, res) => {
     }
   })
   res.send(mapped)
+})
+
+app.post('/gql-query', async (req, res) => {
+  const query = gql([req.body.query])
+  const data = await client.request(query, {})
+  res.send(data)
 })
 
 app.listen(4000)
