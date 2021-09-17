@@ -9,8 +9,14 @@ const uuid = require('uuid').v4
 const bodyParser = require('body-parser')
 const querystring = require('querystring')
 const { promiseSeries } = require('./utils')
-const { USERNAME, PRIVATE_KEY, ORGANIZATION, CLIENT_ID, CLIENT_SECRET } =
-  process.env
+const {
+  USERNAME,
+  PRIVATE_KEY,
+  ORGANIZATION,
+  CLIENT_ID,
+  CLIENT_SECRET,
+  TEMPLATE_REPO,
+} = process.env
 
 const client = new GraphQLClient('https://api.github.com/graphql', {
   headers: {
@@ -114,7 +120,6 @@ const requestReviewer = async ({ reviewer, pr }) => {
   const url = pr
     .replace('https://github.com', `${API_URL}/repos`)
     .replace('/pull', '/pulls')
-  console.log('request', url, reviewer)
   try {
     const response = await axios.post(
       `${url}/requested_reviewers`,
@@ -141,6 +146,20 @@ const getAccessToken = async ({ code, state }) => {
   )
   const { access_token } = querystring.parse(response.data)
   return access_token
+}
+
+const createRepositoryForUser = async (canvasUsername) => {
+  try {
+    const response = await axios.post(
+      `${API_URL}/repos/${TEMPLATE_REPO}/generate`,
+      { name: canvasUsername, owner: ORGANIZATION },
+      {
+        ...auth(),
+        headers: { Accept: 'application/vnd.github.baptiste-preview+json' },
+      }
+    )
+    return response
+  } catch (e) {}
 }
 
 const inviteUserToOrganization = async (userId) => {
@@ -189,10 +208,15 @@ app.get('/oauth', (_, res) =>
   })
 )
 app.post('/invite', async (req, res) => {
-  const { userId } = req.body
+  const { userId, canvasUsername } = req.body
   const invited = await inviteUserToOrganization(userId)
+  let repository
+  if (invited === 'success') {
+    repository = await createRepositoryForUser(canvasUsername)
+  }
   res.send({
     message: invited,
+    repository: repository ? repository.html_url : null,
   })
 })
 
@@ -327,22 +351,18 @@ const dataForQuery = async (query, endCursor = null) => {
     .digest('base64')
 
   if (cache[hash]) {
-    console.log('cache hit')
     return cache[hash]
   }
   const response = await client.request(query, {
     endCursor,
   })
-  console.log('not cached fetch and set to cache')
   cache[hash] = response
 
   return response
 }
 
 const getAllDataForQuery = async (query, endCursor, data = []) => {
-  console.log('getAllDataForQuery', data.length, endCursor)
   const response = await dataForQuery(query, endCursor)
-  console.log('response', response)
 
   const commits = response.repository.ref.target.history.edges.map(
     (n) => n.node
@@ -359,6 +379,11 @@ app.post('/gql-query', async (req, res) => {
   const data = await getAllDataForQuery(query)
 
   res.send(data)
+})
+
+app.get('/clear-cache', (_, res) => {
+  cache = {}
+  res.send('OK')
 })
 
 app.listen(4000)
