@@ -158,7 +158,7 @@ const createRepositoryForUser = async (canvasUsername) => {
         headers: { Accept: 'application/vnd.github.baptiste-preview+json' },
       }
     )
-    return response
+    return response.data
   } catch (e) {}
 }
 
