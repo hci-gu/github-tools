@@ -290,6 +290,9 @@ app.get('/gql', async (req, res) => {
                 number
                 state
                 title
+                author {
+                  login
+                }
                 reviewRequests(first: 10) {
                   nodes {
                     requestedReviewer {
@@ -308,7 +311,7 @@ app.get('/gql', async (req, res) => {
   `
 
   const getUserFromCommits = (ref) => {
-    const blocklist = ['rrostt']
+    const blocklist = ['rrostt', 'hci-gu-bot']
     const commit = ref.target.history.nodes.find((commit) => {
       return (
         commit.author &&
@@ -320,7 +323,14 @@ app.get('/gql', async (req, res) => {
     if (commit) {
       return commit.author.user.login
     }
-    return ref
+  }
+
+  const getUserFromPullRequests = (prs) => {
+    const prWithAuthor = prs.find((pr) => pr.author && pr.author.login)
+
+    if (prWithAuthor) {
+      return prWithAuthor.author.login
+    }
   }
 
   const data = await client.request(query, {})
@@ -328,6 +338,7 @@ app.get('/gql', async (req, res) => {
     let user
     if (repo.defaultBranchRef) {
       user = getUserFromCommits(repo.defaultBranchRef)
+      if (!user) user = getUserFromPullRequests(repo.pullRequests.nodes)
       delete repo.defaultBranchRef
     }
     return {
